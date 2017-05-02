@@ -24,3 +24,5 @@ Please bring your own laptops for presentations, there are VGA and HDMI connecti
 We'll be heading to happy hour after the final presentations, bring your
 ID.
 
+Shanshan's final project on Rpub:
+https://rpubs.com/shawnspei/molb7621_final
