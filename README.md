@@ -25,4 +25,4 @@ We'll be heading to happy hour after the final presentations, bring your
 ID.
 
 Shanshan's final project on Rpub:
-https://rpubs.com/shawnspei/molb7621_final
+https://rpubs.com/shawnspei/final_v2
