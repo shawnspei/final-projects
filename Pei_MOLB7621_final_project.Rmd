@@ -1,0 +1,188 @@
+---
+title: "Pei_2017_MOLB7621_Final_Project"
+author: "Shanshan Pei"
+date: "May 1st, 2017"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+## FTP download the hg38 cdna fasta file
+```{bash, FTP_download_hg38, eval = FALSE}
+ftp ftp.ensembl.org 
+ftp> cd pub/release-88/fasta/homo_sapiens/cdna/
+mget Homo_sapiens.GRCh38.cdna.all.fa.gz
+```
+
+## Kallisto index the hg38.cdna.fasta file
+```{bash, kallisto_indexing, eval = FALSE}
+kallisto index -i hg38.cdna.kallisto.idx Homo_sapiens.GRCh38.cdna.all.fa.gz 
+```
+Processing messages:
+[build] loading fasta file Homo_sapiens.GRCh38.cdna.all.fa.gz
+[build] k-mer length: 31
+[build] warning: clipped off poly-A tail (longer than 10)
+        from 1421 target sequences
+[build] warning: replaced 3 non-ACGUT characters in the input sequence
+        with pseudorandom nucleotides
+[build] counting k-mers ... done.
+[build] building target de Bruijn graph ...  done 
+[build] creating equivalence classes ...  done
+[build] target de Bruijn graph has 1077577 contigs and contains 106161285 k-mers 
+
+
+## Psuedo-align and count reads
+```{bash, Kallisto_quant, eval = FALSE}
+kallisto quant -i ../ensemble_hg38/hg38.cdna.kallisto.idx -o output --single -l 100 -s 20 V1_R1.fastq 
+```
+Processing messages:
+[quant] fragment length distribution is truncated gaussian with mean = 100, sd = 20
+[index] k-mer length: 31
+[index] number of targets: 179,973
+[index] number of k-mers: 106,161,285
+[index] number of equivalence classes: 718,281
+[quant] running in single-end mode
+[quant] will process file 1: V1_R1.fastq
+[quant] finding pseudoalignments for the reads ... done
+[quant] processed 29,894,821 reads, 26,489,621 reads pseudoaligned
+[   em] quantifying the abundances ... done
+[   em] the Expectation-Maximization algorithm ran for 1,241 rounds
+
+
+## Check newly generated kallisto files
+![Caption for the picture.](sleuth_live/tree.png)
+
+## Basic Differential Expression analysis with Sleuth
+### 1. load up sleuth
+```{r load_sleuth}
+library(tidyverse)
+# source("http://bioconductor.org/biocLite.R")
+# biocLite("rhdf5")
+# install.packages("devtools")
+# devtools::install_github("pachterlab/sleuth")
+library("sleuth")
+```
+
+### 2. Construct a dataframe that contains metadata describing the experiment.
+```{r meta_data}
+base_dir <- "~/Documents/MOLB7621/final_project/"
+# get sample ids
+sample_id <- dir(file.path(base_dir, "kallisto"))
+# get full paths to kallisto directories
+paths <- dir(file.path(base_dir, "kallisto"), full.names = T)
+# specify the sample type
+conditions <- c(rep("shRNA", 3), rep("control", 3))
+# put it all in a dataframe
+meta_data <- data_frame(sample = sample_id, 
+               condition = conditions,
+               path = paths)
+meta_data
+```
+
+### 3. Generate a t2g file containing info to map gene symbols to ensemble transcript IDs
+```{r target_mapping}
+source("http://bioconductor.org/biocLite.R")
+# biocLite("biomaRt")
+mart <- biomaRt::useMart(biomart = "ENSEMBL_MART_ENSEMBL",
+  dataset = "hsapiens_gene_ensembl",
+  host = 'ensembl.org')
+
+t2g <- biomaRt::getBM(attributes = c("ensembl_transcript_id", "ensembl_gene_id","external_gene_name"), mart = mart)
+
+t2g <- dplyr::rename(t2g, target_id = ensembl_transcript_id,
+  ens_gene = ensembl_gene_id, ext_gene = external_gene_name)
+
+t2g %>% head()
+```
+
+### 4. Generate Sleuth object and convert ens to gene names
+```{r sleuth_obj}
+so <- sleuth_prep(meta_data, ~ condition, target_mapping = t2g)
+# sleuth objs are essentially lists that contain other R objects
+# to get a decription
+#?sleuth_prep
+# To access each object
+# so$full_model
+```
+
+### 5. Fit full and reduced models in sleuth
+```{r fit_full_and_reduced_models}
+so <- sleuth_fit(so)
+so <- sleuth_fit(so, ~1, 'reduced')
+```
+
+### 6. Perform sleuth stats
+```{r perform_stats}
+so <- sleuth_lrt(so, 'reduced', 'full')
+```
+
+### 7. Gnerate sleuth results and writes it as a csv file
+```{r report_results}
+res <- sleuth_results(so, "reduced:full", test_type = "lrt")
+res <- as_data_frame(res)
+res %>% write.csv("sleuth_analysis_results.csv")
+```
+
+### 8. Visulize sleuth results
+```{r launch_interactive}
+# sleuth_live(so)
+```
+#### 8.1. Knock down efficiency
+![Caption for the picture.](sleuth_live/kd.png)
+
+#### 8.2. Condition_density_plot 
+![Caption for the picture.](sleuth_live/condition_density_plot.png)
+
+#### 8.3. representative scatter_plot (V1 vs D1)
+![Caption for the picture.](sleuth_live/scatter_plot.png)
+
+#### 8.4. pca_plot
+![Caption for the picture.](sleuth_live/pca_plot.png)
+
+
+
+
+
+
+
+## Identify DEGs
+
+### 1. Make a file that contains all est_counts together. Source code from: http://achri.blogspot.com/2017/03/quick-and-dirty-sample-sex-swap-sanity.html
+```{bash, global_est_counts_file, eval = FALSE}
+# first, make a file head
+perl -e 'print "target_id\t",join("\t",map {/(.*)\//;$1} @ARGV),"\n";' kallisto/*/abundance.tsv > all_trinity_abundance.tsv
+
+# then, extract est_counts from eachi invidivual file and append them to the all_trinity_abundance file
+paste kallisto/*/abundance.tsv | perl -ane 'print $F[0];for (1..$#F){print "\t$F[$_]" if /[49]$/}print "\n"' | tail -n +2 >> all_trinity_abundance.tsv
+```
+
+### 3. read in all_trinity_abundance.tsv file and remove low reads
+```{r read_in_all_abundance}
+all <- read_tsv("all_trinity_abundance.tsv") %>% # read in file
+    mutate(sum = rowSums(.[2:7])) %>% # generate an additional column containing sum of the reads per row
+    filter(sum >= 6) %>% # filter out low read genes
+    select(-sum) # remove sum column
+
+all
+```
+
+### 4. select DEGs with qval < 0.001
+```{r DEG_list}
+res %>% 
+  filter(qval < 0.001) -> degs
+degs
+```
+
+### 5. left_join the est_counts to the degs list
+```{r degs_and_est_counts}
+degs %>%
+  left_join(all) -> degs_counts
+
+degs_counts %>%
+  write.csv("degs_and_est_counts.csv")
+
+degs_counts
+```
